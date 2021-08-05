@@ -125,3 +125,8 @@ onChainWallet:
   dustThreshold: 5000
 # TODO
 # carrierRegexFilter: ""
+
+twoFactor:
+  threshold: 300000 # sats
+
+userActivenessMonthlyVolumeThreshold: 1000 # sats
