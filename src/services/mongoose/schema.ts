@@ -239,6 +239,16 @@ const UserSchema = new Schema({
     enum: ["active", "locked"],
     default: "active",
   },
+
+  twoFactor: {
+    secret: {
+      type: String,
+    },
+    threshold: {
+      type: Number,
+      default: yamlConfig.twoFactor.threshold,
+    },
+  },
 })
 
 // Define getter for ratioUsd
@@ -267,31 +277,55 @@ UserSchema.virtual("oldEnoughForWithdrawal").get(function (this: typeof UserSche
   return d - this.created_at.getTime() > yamlConfig.limits.oldEnoughForWithdrawal
 })
 
-UserSchema.methods.limitHit = async function ({
-  on_us,
-  amount,
-}: {
-  on_us: boolean
-  amount: number
-}) {
-  const timestampYesterday = Date.now() - MS_PER_DAY
+UserSchema.virtual("twoFactorEnabled").get(function (this: typeof UserSchema) {
+  return this.twoFactor.secret != null
+})
 
-  const txnType = on_us
-    ? [{ type: "on_us" }, { type: "onchain_on_us" }]
-    : [{ type: { $ne: "on_us" } }]
+const getTimestampYesterday = () => Date.now() - MS_PER_DAY
 
-  const limit = yamlConfig.limits[on_us ? "onUs" : "withdrawal"].level[this.level]
+UserSchema.methods.remainingTwoFactorLimit = async function () {
+  const threshold = this.twoFactor.threshold
 
-  const outgoingSats =
-    (
-      await User.getVolume({
-        after: timestampYesterday,
-        txnType,
-        accounts: this.accountPath,
-      })
-    )?.outgoingSats ?? 0
+  const txnType = [
+    { type: "on_us" },
+    { type: "onchain_on_us" },
+    { type: "onchain_payment" },
+    { type: "payment" },
+  ]
 
-  return outgoingSats + amount > limit
+  const { outgoingSats } = await User.getVolume({
+    after: getTimestampYesterday(),
+    txnType,
+    accounts: this.accountPath,
+  })
+
+  return threshold - outgoingSats
+}
+
+UserSchema.methods.remainingWithdrawalLimit = async function () {
+  if (!this.oldEnoughForWithdrawal) return 0
+
+  const withdrawalLimit = yamlConfig.limits["withdrawal"].level[this.level]
+
+  const { outgoingSats } = await User.getVolume({
+    after: getTimestampYesterday(),
+    txnType: [{ type: "on_us" }, { type: "onchain_on_us" }],
+    accounts: this.accountPath,
+  })
+
+  return withdrawalLimit - outgoingSats
+}
+
+UserSchema.methods.remainingOnUsLimit = async function () {
+  const onUsLimit = yamlConfig.limits["onUs"].level[this.level]
+
+  const { outgoingSats } = await User.getVolume({
+    after: getTimestampYesterday(),
+    txnType: [{ type: "on_us" }, { type: "onchain_on_us" }],
+    accounts: this.accountPath,
+  })
+
+  return onUsLimit - outgoingSats
 }
 
 UserSchema.statics.getVolume = async function ({
@@ -321,7 +355,11 @@ UserSchema.statics.getVolume = async function ({
       },
     },
   ])
-  return result
+
+  return {
+    outgoingSats: result?.outgoingSats ?? 0,
+    incomingSats: result?.incomingSats ?? 0,
+  }
 }
 
 // FIXME: for onchain wallet from multiple wallet
@@ -339,6 +377,7 @@ UserSchema.virtual("onchain_pubkey").get(function (this: typeof UserSchema) {
 // eslint-disable-next-line no-unused-vars
 UserSchema.virtual("userIsActive").get(async function (this: typeof UserSchema) {
   const timestamp30DaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+  const activenessThreshold = yamlConfig.userActivenessMonthlyVolumeThreshold
 
   const volume = await User.getVolume({
     after: timestamp30DaysAgo,
@@ -346,7 +385,9 @@ UserSchema.virtual("userIsActive").get(async function (this: typeof UserSchema) 
     accounts: this.accountPath,
   })
 
-  return volume?.outgoingSats > 1000 || volume?.incomingSats > 1000
+  return (
+    volume.outgoingSats > activenessThreshold || volume.incomingSats > activenessThreshold
+  )
 })
 
 UserSchema.statics.getUserByPhone = async function (phone: string) {

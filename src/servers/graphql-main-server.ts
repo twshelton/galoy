@@ -50,6 +50,7 @@ const resolvers = {
         username,
         contacts,
         language,
+        twoFactorEnabled: user.twoFactorEnabled,
       }
     },
 
@@ -154,13 +155,7 @@ const resolvers = {
       return uid
     },
     getLevels: () => levels,
-    getLimits: (_, __, { user }) => {
-      return {
-        oldEnoughForWithdrawal: yamlConfig.limits.oldEnoughForWithdrawal,
-        withdrawal: yamlConfig.limits.withdrawal.level[user.level],
-        onUs: yamlConfig.limits.onUs.level[user.level],
-      }
-    },
+    getUserLimits: (_, __, { wallet }) => wallet.getUserLimits(),
     getWalletFees: () => ({
       deposit: yamlConfig.fees.deposit,
     }),
@@ -172,6 +167,10 @@ const resolvers = {
     login: async (_, { phone, code }, { logger, ip }) => ({
       token: await login({ phone, code, logger, ip }),
     }),
+    generate2fa: async (_, __, { wallet }) => await wallet.generate2fa(),
+    save2fa: async (_, { secret, token }, { wallet }) =>
+      await wallet.save2fa({ secret, token }),
+    delete2fa: async (_, { token }, { wallet }) => await wallet.delete2fa({ token }),
     updateUser: (_, __, { wallet }) => ({
       setUsername: async ({ username }) => await wallet.setUsername({ username }),
       setLanguage: async ({ language }) => await wallet.setLanguage({ language }),
@@ -278,6 +277,9 @@ export async function startApolloServerForSchema() {
         getLevels: and(isAuthenticated, isEditor),
       },
       Mutation: {
+        generate2fa: isAuthenticated,
+        delete2fa: isAuthenticated,
+        save2fa: isAuthenticated,
         onchain: isAuthenticated,
         invoice: isAuthenticated,
         earnCompleted: isAuthenticated,
