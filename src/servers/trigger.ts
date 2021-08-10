@@ -255,7 +255,7 @@ const listenerOffchain = ({ lnd, pubkey }) => {
   })
 }
 
-const main = () => {
+const main = async () => {
   lndStatusEvent.on("started", ({ lnd, pubkey, socket, type }) => {
     baseLogger.info({ socket }, "lnd started")
 
